@@ -1,0 +1,18 @@
+{
+  "INVALID_PAYLOAD": "Invalid event payload.",
+  "PAYLOAD_TOO_LARGE": "Event exceeds the 4096-byte limit.",
+  "UNKNOWN_EVENT": "Unsupported networking event.",
+  "FORBIDDEN_EVENT": "Notifications can only be published by the server.",
+  "RATE_LIMITED": "Limit: 20 requests per 10 seconds.",
+  "TEST_NOTIFICATIONS_DISABLED": "Test notifications are development only.",
+  "INTERNAL_ERROR": "Request could not be processed.",
+  "AUTH_REQUIRED": "Authentication required. Sign in before reconnecting.",
+  "AUTH_UNAVAILABLE": "Authentication could not be verified. Reconnect manually.",
+  "CONNECTION_REJECTED": "Connection rejected. Verify access before reconnecting.",
+  "CONNECTION_FAILED": "Connection failed. Check the backend and server URL.",
+  "RETRY_EXHAUSTED": "Automatic reconnection stopped after 8 attempts. Select Connect to retry.",
+  "DISCONNECTED": "Connect to the server before sending.",
+  "ACK_TIMEOUT": "Server acknowledgment timed out or connection was interrupted.",
+  "INVALID_ACK": "Invalid server response.",
+  "ABORTED": "Request cancelled."
+}
