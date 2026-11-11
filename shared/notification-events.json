@@ -1,0 +1,8 @@
+{
+  "VERSION": 1,
+  "NOTIFICATION": "notification:v1",
+  "PAYMENT_COMPLETED": "payment:completed:v1",
+  "PAYMENT_FAILED": "payment:failed:v1",
+  "TEST_REQUEST": "notification:test:request:v1",
+  "TEST_NOTIFICATION": "notification:test:v1"
+}

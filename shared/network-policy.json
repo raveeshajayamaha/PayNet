@@ -1,0 +1,11 @@
+{
+  "maxPacketBytes": 8192,
+  "maxEventBytes": 4096,
+  "eventsPerWindow": 20,
+  "rateWindowMs": 10000,
+  "verificationTimeoutMs": 5000,
+  "acknowledgmentTimeoutMs": 5000,
+  "reconnectionAttempts": 8,
+  "reconnectionDelayMs": 500,
+  "reconnectionDelayMaxMs": 5000
+}
