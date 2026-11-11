@@ -2,6 +2,8 @@
 
 **Status:** M3-01 through M3-04 are implemented and verified. Networking works without PostgreSQL or unfinished payment APIs. This handover does not claim authenticated payments or banking integration. Read [FINAL_NETWORKING_VERIFICATION.md](./FINAL_NETWORKING_VERIFICATION.md) for final checks and Git review, [NETWORKING.md](./NETWORKING.md) for protocol details, and [NETWORK_SECURITY.md](./NETWORK_SECURITY.md) for security boundaries.
 
+For the subsequent `feature/payment-integration` preparation, use [PAYMENT_INTEGRATION_CHECKLIST.md](./PAYMENT_INTEGRATION_CHECKLIST.md): exact Member 2 dependencies, authenticated connection/privacy requirements, commit/idempotency sequence and a test matrix explicitly separating runnable network regressions from deferred real payment tests. Earlier handover Git-state records are historical; the networking implementation is now merged.
+
 ## Architecture and entry points
 
 ```text
