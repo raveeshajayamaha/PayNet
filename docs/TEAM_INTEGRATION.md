@@ -1,5 +1,73 @@
 # PayNet networking: team integration handover
 
+## Current payment networking integration
+
+This section supersedes the historical M3 snapshot below. The review branch is
+`integration/payment-networking`, created from `origin/main` at `43f4e32`.
+The original `feature/payment-integration` checklist commit remains untouched.
+Member 2's backend uses MongoDB replica-set transactions, not PostgreSQL. No
+schema, authentication service, transaction calculation, or payment service was
+changed by this integration.
+
+### One authoritative publication path
+
+`backend/services/payments.js` finishes its database transaction before calling
+`runtime.publish({transaction, notifications})`. The implementation installed by
+`backend/socket/payments.js` maps persisted outcomes into the shared version-1
+contracts and invokes `namespace.notificationPublisher.publishToUser(...)`.
+This is the existing `createNotificationPublisher` scoped to `/payments`.
+Do not also publish through the root `io.notificationPublisher`, or emit the
+retired `notification:new`, `payment:sent`, `payment:received`, `wallet:updated`,
+or `transaction:updated` aliases. Root networking remains a separate development
+demo; its default financial publisher remains disabled.
+
+The actual authentication integration is already supplied by Member 2:
+`runtime.auth.verify` checks the HttpOnly session cookie at the handshake and
+again before each delivery. The server selects `verified-user:<id>` and
+`verified-session:<id>` rooms. `runtime.disconnectSession(id)` and
+`runtime.disconnectUser(id)` revoke live connections; expiry also disconnects.
+Before sending, the publisher verifies persisted notification ownership and its
+transaction reference. Clients cannot join rooms or originate financial events.
+Keep the exact origin allowlist, credential policy, payload/rate limits and
+verification deadlines enabled. Never substitute a client-supplied user ID.
+
+### Frontend integration
+
+`createPaymentConnection` in `frontend/src/services/paymentConnection.js` owns
+one credentialed `/payments` connection per account lifecycle. It uses the
+existing connection manager and validated, deduplicating notification listener.
+Transient errors use bounded backoff; permanent authorization errors block
+automatic retries. Reauthentication creates a new lifecycle; the UI also offers
+an explicit reconnect control. Focus/online events never reset a blocked retry
+budget.
+
+Events invalidate state rather than assign balances. `AppContext.refresh()`
+reconciles `/api/auth/me`, `/api/wallet/summary`, and `/api/notifications` on
+connection, disconnection, notice delivery, focus/online, and a 20-second poll.
+Transaction pages observe the refresh revision and reload their authenticated
+API data. Logout/account changes abort pending reads and invalidate a session
+generation, including when a response ignores cancellation or account A returns
+after switching through account B. Pagination and unread state reset together.
+
+### Member 2 follow-up
+
+1. Preserve the post-commit `runtime.publish` seam and canonical contracts.
+2. Preserve scoped idempotency keys and authoritative persisted outcome errors.
+   See [PAYMENT_INTEGRATION_CHECKLIST.md](PAYMENT_INTEGRATION_CHECKLIST.md).
+3. Coordinate an authenticated lookup by idempotency key for unresolved requests
+   that cannot yet obtain a terminal response. Do not clear their keys simply
+   because a retry returns a validation, authentication, or rate-limit error.
+4. Add a transactional outbox and replay/cursor protocol before claiming durable
+   live delivery. Current sockets are best effort; persisted API state is the
+   reconciliation source. In-memory listener deduplication is bounded and does
+   not provide exactly-once processing.
+5. Validate deployment cookies, TLS/proxy origin policy, session revocation and
+   multi-instance publication separately. Local replica-set tests do not certify
+   production security or availability.
+
+See [PAYMENT_NETWORKING_VERIFICATION.md](PAYMENT_NETWORKING_VERIFICATION.md)
+for executed checks and manual commands.
+
 > Historical M3 handover. Task 04 now implements authenticated virtual payments and
 > the connected frontend. Use [backend/README.md](../backend/README.md) and the
 > root README for current startup, API and `/payments` namespace instructions.

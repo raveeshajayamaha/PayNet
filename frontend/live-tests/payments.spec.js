@@ -97,5 +97,7 @@ test('admin signs in through the existing UI and sees database-provided statisti
   await expect(page).toHaveURL(/admin/);
   await expect(page.getByText('Registered account directory')).toBeVisible();
   await expect(page.locator('.system-panel')).toContainText('Transactions supported');
+  // Other integration cases create more than one page of users; search the directory.
+  await page.getByRole('textbox', { name: 'Search users' }).fill(fixture.email);
   await expect(page.getByRole('cell', { name: fixture.email, exact: true })).toBeVisible();
 });

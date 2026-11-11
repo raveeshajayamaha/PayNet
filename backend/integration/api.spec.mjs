@@ -10,6 +10,8 @@ import databaseModule from '../config/database.js';
 import serverModule from '../server.js';
 import adminModule from '../scripts/create-admin.js';
 import migrationModule from '../scripts/migrate-money-fields.js';
+import contracts from '../services/notificationContracts.js';
+const { EVENTS, validateNotification } = contracts;
 const { createDatabase } = databaseModule;
 const { createPayNetServer } = serverModule;
 const origin = 'http://localhost:5173';
@@ -199,7 +201,7 @@ describe('atomic virtual payments and audit history', () => {
   });
   it('rolls back debit, credit, ledger and notifications on a precommit failure; same-key retry is safe', async () => {
     const a = await register(); const b = await register('bob@example.com'); await fund(a, 1000);
-    const socket = await socketFor(b); const events = []; socket.on('payment:received', (e) => events.push(e));
+    const socket = await socketFor(b); const events = []; socket.on(EVENTS.PAYMENT_COMPLETED, (e) => events.push(e));
     failBeforeCommit = true; const key = randomUUID();
     expect((await send(a, b.user.email, 100, key)).status).toBe(503);
     expect([await balance(a), await balance(b)]).toEqual([1000, 0]);
@@ -239,6 +241,54 @@ describe('atomic virtual payments and audit history', () => {
 });
 
 describe('authenticated sockets, administration and operational safety', () => {
+  it('emits one versioned committed notice per recipient, not legacy aliases or replay duplicates', async () => {
+    const a = await register(); const b = await register('bob@example.com'); await fund(a, 1000);
+    const sb = await socketFor(b), notices = [], aliases = [];
+    sb.on(EVENTS.PAYMENT_COMPLETED, (value) => notices.push(value));
+    for (const event of ['payment:received', 'notification:new', 'wallet:updated', 'transaction:updated']) sb.on(event, () => aliases.push(event));
+    const expected = once(sb, EVENTS.PAYMENT_COMPLETED, { signal: AbortSignal.timeout(5000) });
+    const key = randomUUID(); const response = await send(a, b.user.email, 100, key); await expected;
+    expect((await send(a, b.user.email, 100, key)).body.replayed).toBe(true);
+    await sb.timeout(2000).emitWithAck('join', {}); // wire ordering barrier
+    expect(notices).toHaveLength(1); expect(aliases).toEqual([]);
+    expect(validateNotification(EVENTS.PAYMENT_COMPLETED, notices[0])).toBe(true);
+    expect(notices[0].transactionRef).toBe(response.body.transaction.id);
+    expect(await db.models.Notification.countDocuments({ userId: b.user.id })).toBe(1);
+    expect(instance.io.notificationPublisher.enabled).toBe(false);
+    expect(instance.paymentSockets.notificationPublisher.enabled).toBe(true);
+  });
+  it('emits a validated failed outcome only to the initiator, once despite same-key retry', async () => {
+    const a = await register(); const b = await register('bob@example.com');
+    const sa = await socketFor(a), sb = await socketFor(b), failures = [], unrelated = [];
+    sa.on(EVENTS.PAYMENT_FAILED, (value) => failures.push(value)); sb.onAny((event) => unrelated.push(event));
+    const delivered = once(sa, EVENTS.PAYMENT_FAILED, { signal: AbortSignal.timeout(5000) });
+    const key = randomUUID(); expect((await send(a, b.user.email, 1, key)).status).toBe(409);
+    expect(validateNotification(EVENTS.PAYMENT_FAILED, (await delivered)[0])).toBe(true);
+    expect((await send(a, b.user.email, 1, key)).body.error.details.replayed).toBe(true);
+    await sa.timeout(2000).emitWithAck('join', {}); await sb.timeout(2000).emitWithAck('join', {});
+    expect(failures).toHaveLength(1); expect(unrelated).toEqual([]);
+  });
+  it('reauthorizes persisted notice ownership and disconnects revoked sessions before delivery', async () => {
+    const a = await register(); const b = await register('bob@example.com'); await fund(a, 1000);
+    const sb = await socketFor(b); const delivered = once(sb, EVENTS.PAYMENT_COMPLETED, { signal: AbortSignal.timeout(5000) });
+    const response = await send(a, b.user.email, 100); await delivered;
+    const transaction = await db.models.Transaction.findById(response.body.transaction.id);
+    const notifications = await db.models.Notification.find({ userId: b.user.id, transactionId: transaction._id });
+    await db.models.Session.deleteOne({ userId: b.user.id });
+    const disconnected = once(sb, 'disconnect', { signal: AbortSignal.timeout(5000) });
+    await instance.runtime.publish({ transaction, notifications }); await disconnected;
+    expect(sb.connected).toBe(false);
+    expect((await b.agent.get('/api/notifications')).status).toBe(401);
+  });
+  it('rejects invalid financial payloads and enforces the application byte limit in /payments', async () => {
+    const a = await register(); const socket = await socketFor(a); await fund(a, 100);
+    const transaction = await db.models.Transaction.findOne({ initiatorUserId: a.user.id });
+    const notice = await db.models.Notification.findOne({ userId: a.user.id });
+    await expect(instance.runtime.publish({ transaction, notifications: [{ ...notice.toObject(), message: '' }] })).rejects.toThrow('Invalid committed notification');
+    const response = await socket.timeout(2000).emitWithAck('join', { padding: 'x'.repeat(4200) });
+    expect(response.error.code).toBe('PAYLOAD_TOO_LARGE');
+    expect((await socket.timeout(2000).emitWithAck('payment:completed:v1', {})).error.code).toBe('FORBIDDEN_EVENT');
+  });
   it('disabled production funding stays disabled even if the demo flag is set', async () => {
     const a = await register();
     const production = createPayNetServer({ database: db, env: { ...env, NODE_ENV: 'production', FRONTEND_URL: 'https://paynet.example' }, logger });
@@ -279,12 +329,12 @@ describe('authenticated sockets, administration and operational safety', () => {
     const sa = await socketFor(a), sb = await socketFor(b), sc = await socketFor(c);
     const leaked = []; sc.onAny((event) => leaked.push(event));
     const denied = await sc.timeout(2000).emitWithAck('join', { userId: b.user.id }); expect(denied.ok).toBe(false);
-    const sent = once(sa, 'payment:sent', { signal: AbortSignal.timeout(5000) });
-    const received = once(sb, 'payment:received', { signal: AbortSignal.timeout(5000) });
+    const sent = once(sa, EVENTS.PAYMENT_COMPLETED, { signal: AbortSignal.timeout(5000) });
+    const received = once(sb, EVENTS.PAYMENT_COMPLETED, { signal: AbortSignal.timeout(5000) });
     const response = await send(a, b.user.email, 100);
     expect(response.status).toBe(201);
-    expect((await sent)[0].referenceNumber).toBe(response.body.transaction.referenceNumber);
-    expect((await received)[0].referenceNumber).toBe(response.body.transaction.referenceNumber);
+    const sentNotice = (await sent)[0]; expect(validateNotification(EVENTS.PAYMENT_COMPLETED, sentNotice)).toBe(true); expect(sentNotice.transactionRef).toBe(response.body.transaction.id);
+    const receivedNotice = (await received)[0]; expect(validateNotification(EVENTS.PAYMENT_COMPLETED, receivedNotice)).toBe(true); expect(receivedNotice.transactionRef).toBe(response.body.transaction.id);
     expect(leaked).toEqual([]);
   });
   it('recovers missed committed updates from persisted APIs after reconnecting', async () => {

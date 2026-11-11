@@ -1,7 +1,6 @@
 ﻿import { useState } from "react";
 import { sampleUser, initialNotifications } from "../data/demo";
 import { useCallback, useRef } from 'react';
-import { io } from 'socket.io-client';
 import { apiOrigin, demoMode, setCsrfToken } from '../services/api';
 import { authService } from '../services/auth';
 import { walletService } from '../services/wallets';
@@ -12,6 +11,8 @@ import { useEffect } from 'react';
 import { getNetworkSocket, retainNetworkSocket } from '../services/socket';
 import { subscribeNotifications } from '../services/notificationListener';
 import './NotificationToast.css';
+import { createAccountScope } from '../services/accountScope';
+import { createPaymentConnection } from '../services/paymentConnection';
 export function AppProvider({ children }) {
   const [user, setUser] = useState(demoMode ? sampleUser : null);
   const [notifications, setNotifications] = useState(demoMode ? initialNotifications : []);
@@ -26,19 +27,23 @@ export function AppProvider({ children }) {
   const [sessionRevision, setSessionRevision] = useState(0);
   const [dataError, setDataError] = useState('');
   const [networkStatus, setNetworkStatus] = useState('connecting');
-  const identity = useRef(null), epoch = useRef(0), refreshing = useRef(null);
+  const accountScope = useRef(createAccountScope()), refreshing = useRef(null), pagination = useRef(null), paymentConnection = useRef(null);
   const clearSession = useCallback(() => {
-    epoch.current++; identity.current = null; refreshing.current = null;
+    accountScope.current.change(null); refreshing.current = null; pagination.current = null;
     setCsrfToken(); setUser(null); setNotifications([]); setSummary(null); setUnreadCount(0); setDataError('');
+    setNotificationPage(1); setNotificationPages(1); setNetworkStatus('disconnected');
   }, []);
   const refresh = useCallback(() => {
-    if (demoMode || !identity.current) return Promise.resolve();
+    if (demoMode || !accountScope.current.userId) return Promise.resolve();
     if (refreshing.current) return refreshing.current;
-    const version = epoch.current;
+    pagination.current?.cancel(); pagination.current = null;
+    const request = accountScope.current.capture();
     const promise = (async () => {
       try {
-        const [me, walletSummary, noticeList] = await Promise.all([authService.me(), walletService.summary(), notificationService.list({ page: 1, limit: 50 })]);
-        if (version !== epoch.current) return;
+        const options = { signal: request.signal };
+        const [me, walletSummary, noticeList] = await Promise.all([authService.me(options), walletService.summary(options), notificationService.list({ page: 1, limit: 50 }, options)]);
+        if (!request.isCurrent()) return;
+        if (me.user.id !== request.userId || walletSummary.wallet.userId !== request.userId || noticeList.items.some((n) => !n.id)) { clearSession(); return; }
         setCsrfToken(me.csrfToken);
         setUser(mapUser(me.user, walletSummary.wallet));
         setSummary({ ...walletSummary, recentTransactions: walletSummary.recentTransactions.map(mapTransaction) });
@@ -46,65 +51,65 @@ export function AppProvider({ children }) {
         setNotificationPage(1); setNotificationPages(noticeList.pages);
         setDataError(''); setRevision((v) => v + 1);
       } catch (error) {
-        if (version !== epoch.current) return;
+        if (!request.isCurrent()) return;
         if (error.status === 401) clearSession();
         else setDataError(error.message + ' Displayed data may be out of date.');
-      } finally { if (refreshing.current === promise) refreshing.current = null; }
+      } finally { request.release(); if (refreshing.current === promise) refreshing.current = null; }
     })();
     refreshing.current = promise;
     return promise;
   }, [clearSession]);
   const signIn = useCallback(async (result) => {
-    epoch.current++; refreshing.current = null; identity.current = result.user.id;
+    accountScope.current.change(result.user.id); refreshing.current = null; pagination.current = null;
     setCsrfToken(result.csrfToken); setUser(mapUser(result.user, result.wallet)); setSummary(null); setNotifications([]);
     setDataError(''); setSessionRevision((v) => v + 1);
+    setNotificationPage(1); setNotificationPages(1); setUnreadCount(0);
     await refresh();
   }, [refresh]);
   useEffect(() => {
     if (demoMode) return;
     const controller = new AbortController();
-    const version = epoch.current;
-    authService.me().then((result) => {
-      if (!controller.signal.aborted && epoch.current === version) return signIn(result);
+    const version = accountScope.current.generation;
+    authService.me({ signal: controller.signal }).then((result) => {
+      if (!controller.signal.aborted && accountScope.current.generation === version) return signIn(result);
     }).catch((error) => { if (!controller.signal.aborted && error.status !== 401) setDataError(error.message); })
       .finally(() => { if (!controller.signal.aborted) setAuthLoading(false); });
     return () => controller.abort();
   }, [signIn]);
   useEffect(() => {
     if (demoMode || !user?.id) return;
-    const socket = io((import.meta.env.VITE_SOCKET_URL || apiOrigin).replace(/\/$/, '') + '/payments', {
-      withCredentials: true, forceNew: true, reconnectionAttempts: 8, reconnectionDelay: 500, reconnectionDelayMax: 5000,
-    });
-    let refreshTimer;
-    const changed = () => { clearTimeout(refreshTimer); refreshTimer = setTimeout(() => { void refresh(); }, 80); };
-    socket.on('connect', () => { setNetworkStatus('connected'); void refresh(); });
-    socket.on('disconnect', () => { setNetworkStatus('disconnected'); void refresh(); });
-    socket.on('connect_error', (error) => {
-      setNetworkStatus('disconnected');
-      if (error.data?.code === 'AUTH_REQUIRED') { socket.disconnect(); void refresh(); }
-    });
-    for (const event of ['payment:sent', 'payment:received', 'wallet:updated', 'transaction:updated', 'notification:new']) socket.on(event, changed);
-    const timer = setInterval(() => { void refresh(); }, 20000);
-    const resume = () => { if (!socket.connected) socket.connect(); void refresh(); };
-    window.addEventListener('online', resume); window.addEventListener('focus', resume);
+    const connection = createPaymentConnection({ url: import.meta.env.VITE_SOCKET_URL || apiOrigin,
+      reconcile: refresh, onState: (state) => setNetworkStatus(state.status) });
+    paymentConnection.current = connection;
     return () => {
-      clearInterval(timer); clearTimeout(refreshTimer);
-      window.removeEventListener('online', resume); window.removeEventListener('focus', resume);
-      socket.removeAllListeners(); socket.disconnect();
+      connection.dispose(); if (paymentConnection.current === connection) paymentConnection.current = null;
     };
   }, [user?.id, sessionRevision, refresh]);
-  async function logout() { await authService.logout(); clearSession(); }
+  useEffect(() => () => accountScope.current.change(null), []);
+  async function logout() {
+    // Start with the current CSRF header, then clear/cancel local private state immediately.
+    const pending = authService.logout(); clearSession(); await pending;
+  }
   async function markRead(id) {
     if (demoMode) { setNotifications((items) => items.map((n) => !id || n.id === id ? { ...n, read: true } : n)); return; }
-    try { await (id ? notificationService.markRead(id) : notificationService.markAll()); await refresh(); }
-    catch (error) { setDataError(error.message); }
+    const request = accountScope.current.capture();
+    try {
+      await (id ? notificationService.markRead(id, { signal: request.signal }) : notificationService.markAll({ signal: request.signal }));
+      if (request.isCurrent()) await refresh();
+    } catch (error) { if (request.isCurrent()) setDataError(error.message); }
+    finally { request.release(); }
   }
   async function loadMoreNotifications() {
+    if (!accountScope.current.userId || refreshing.current) return;
+    pagination.current?.cancel();
+    const request = accountScope.current.capture(); pagination.current = request;
     try {
-      const result = await notificationService.list({ page: notificationPage + 1, limit: 50 });
-      setNotifications((items) => [...new Map([...items, ...result.items.map(mapNotification)].map((n) => [n.id, n])).values()]);
+      const result = await notificationService.list({ page: notificationPage + 1, limit: 50 }, { signal: request.signal });
+      if (!request.isCurrent()) return;
+      setNotifications((items) => request.isCurrent() ? [...new Map([...items, ...result.items.map(mapNotification)].map((n) => [n.id, n])).values()] : items);
       setNotificationPage(result.page); setNotificationPages(result.pages);
-    } catch (error) { setDataError(error.message); }
+    } catch (error) { if (request.isCurrent()) setDataError(error.message); }
+    finally { request.release(); if (pagination.current === request) pagination.current = null; }
   }
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -124,7 +129,8 @@ export function AppProvider({ children }) {
     <AppContext.Provider
       value={{ user, setUser, notifications, setNotifications, testNotifications, setTestNotifications,
         authLoading, signIn, logout, refresh, summary, revision, networkStatus, dataError, markRead, unreadCount,
-        notificationPage, notificationPages, loadMoreNotifications }}
+        notificationPage, notificationPages, loadMoreNotifications,
+        reconnectPayments: () => paymentConnection.current?.reconnect() }}
     >
       {children}
       {notificationToast && <aside className="notification-toast" role="status" aria-label="Test notification">

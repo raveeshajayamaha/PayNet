@@ -3,11 +3,11 @@ const { verifyWithDeadline } = require('./verificationDeadline');
 
 // Only trusted server code supplies these adapters. No client event calls publishToUser.
 // Defaults fail closed, even if handshake.auth contains a plausible user ID.
-function createNotificationPublisher({ io, authenticateSocket, authorizeNotification } = {}) {
-  const enabled = Boolean(io && typeof authenticateSocket === 'function' && typeof authorizeNotification === 'function');
+function createNotificationPublisher({ io, namespace = io?.of('/'), authenticateSocket, authorizeNotification } = {}) {
+  const enabled = Boolean(namespace && typeof authenticateSocket === 'function' && typeof authorizeNotification === 'function');
   const identities = new WeakMap();
   if (enabled) {
-    io.use(async (socket, next) => {
+    namespace.use(async (socket, next) => {
       try {
         const identity = await verifyWithDeadline((signal) => authenticateSocket(socket, { signal }));
         if (!identity || !validId(identity.userId)) throw new Error('Authentication required.');
@@ -34,7 +34,7 @@ function createNotificationPublisher({ io, authenticateSocket, authorizeNotifica
       try {
         // Reauthorize each live session at delivery time, including after reconnect.
         // Never use client-provided rooms or socket.data for trusted identity.
-        for (const socket of io.of('/').sockets.values()) {
+        for (const socket of namespace.sockets.values()) {
           const identity = identities.get(socket);
           if (identity?.userId !== userId || !socket.connected) continue;
           if (await verifyWithDeadline((signal) => authorizeNotification({ socket, userId, event, notification, signal })) !== true) continue;
