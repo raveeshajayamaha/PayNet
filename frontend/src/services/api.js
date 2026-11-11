@@ -25,5 +25,5 @@ export async function apiRequest(path, options = {}) {
   return data;
 }
 export const checkHealth = () => apiRequest("/api/health");
-export const jsonRequest = (path, method, data = {}, headers = {}) => apiRequest(path, { method, body: JSON.stringify(data), headers });
+export const jsonRequest = (path, method, data = {}, headers = {}, options = {}) => apiRequest(path, { ...options, method, body: JSON.stringify(data), headers });
 export const queryString = (values = {}) => new URLSearchParams(Object.entries(values).filter(([, value]) => value !== '' && value != null)).toString();
