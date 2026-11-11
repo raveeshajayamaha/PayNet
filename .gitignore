@@ -10,3 +10,5 @@ dist/
 .mongodb-data/
 test-results/
 playwright-report/
+
+/PayNet-Member2/

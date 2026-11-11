@@ -4,7 +4,7 @@ import { useRef } from 'react';
 import { demoMode, queryString } from '../services/api';
 import { useRemoteData } from '../hooks/useRemoteData';
 import { displayRupees, mapTransaction, parseCents, moneyCents } from '../services/liveData';
-import { readPending, savePending, clearPending } from '../services/pendingPayments';
+import { readPending, executePendingPayment, isConfirmedPaymentFailure } from '../services/pendingPayments';
 import { walletService } from '../services/wallets';
 import {
   AreaChart,
@@ -133,13 +133,12 @@ export function Dashboard() {
     if (!fundingAttempt.current) fundingAttempt.current = { key: crypto.randomUUID(), input: { amountCents: Math.min(100000, summary.demoFundingRemainingCents) } };
     setFundBusy(true);
     try {
-      savePending('fund', user.id, fundingAttempt.current);
-      await walletService.fund(fundingAttempt.current.input.amountCents, fundingAttempt.current.key);
-      clearPending('fund', user.id); fundingAttempt.current = null; setFundUncertain(false); setFundMessage('Demo funds added.'); await refresh();
+      await executePendingPayment('fund', user.id, fundingAttempt.current, (input, key) => walletService.fund(input.amountCents, key));
+      fundingAttempt.current = null; setFundUncertain(false); setFundMessage('Demo funds added.'); await refresh();
     } catch (error) {
-      if (error.status >= 400 && error.status < 500) { clearPending('fund', user.id); fundingAttempt.current = null; }
+      if (isConfirmedPaymentFailure(error)) fundingAttempt.current = null;
       setFundUncertain(Boolean(fundingAttempt.current));
-      setFundMessage(error.message + (fundingAttempt.current ? ' Retry to confirm the same funding request.' : ''));
+      setFundMessage(error.message + (fundingAttempt.current ? ' Outcome unconfirmed. Retry to confirm the same funding request.' : ''));
     } finally { setFundBusy(false); }
   }
   return (
@@ -286,17 +285,16 @@ export function SendMoney() {
   async function send() {
     setBusy(true);
     try {
-      if (!demoMode) savePending('transfer', user.id, attempt.current);
-      const response = await transactionService.send(demoMode ? form : attempt.current.input, attempt.current?.key);
-      if (response.transaction.status !== 'COMPLETED') throw new Error('The payment outcome is not confirmed.');
+      const response = demoMode ? await transactionService.send(form) :
+        await executePendingPayment('transfer', user.id, attempt.current, transactionService.send);
       setResult('Payment completed. Reference ' + response.transaction.referenceNumber);
-      clearPending('transfer', user.id); setConfirm(false); setUncertain(false); attempt.current = null;
+      setConfirm(false); setUncertain(false); attempt.current = null;
       setForm({ email: '', amount: '', description: '' }); await refresh();
     } catch (e) {
       if (demoMode) setResult(`${e.message} No payment was made.`);
-      else if (e.status >= 400 && e.status < 500) {
+      else if (isConfirmedPaymentFailure(e)) {
         setResult(e.message + (e.details?.referenceNumber ? ' Reference ' + e.details.referenceNumber : ''));
-        clearPending('transfer', user.id); setUncertain(false); attempt.current = null;
+        setUncertain(false); attempt.current = null;
       } else {
         setUncertain(true);
         setResult(e.message + ' Outcome unconfirmed. Retry this request to check the same payment; do not create a new payment.');

@@ -251,7 +251,7 @@ export function Topbar({ onMenu, admin }) {
   );
 }
 export function DashboardLayout({ admin = false }) {
-  const { dataError, refresh, networkStatus } = useApp();
+  const { dataError, refresh, networkStatus, reconnectPayments } = useApp();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   return (
@@ -264,6 +264,10 @@ export function DashboardLayout({ admin = false }) {
             <span className="status-dot" /> {demoMode ? 'Demo preview · All balances, transactions and analytics are sample data. No real money moves.' : `Virtual account · Server-confirmed activity · Live updates ${networkStatus}. No bank funds are involved.`}
           </div>
           {!demoMode && dataError && <div className="notice" role="alert">{dataError} <button className="text-button" onClick={() => refresh()}>Retry</button></div>}
+          {!demoMode && ['blocked', 'disconnected'].includes(networkStatus) && <p className="notice">
+            Live updates are paused. Persisted data can still be refreshed through the authenticated API.
+            <button className="text-button" onClick={reconnectPayments}>Reconnect live updates</button>
+          </p>}
           <Outlet />
         </main>
         <div className="workspace-footer">

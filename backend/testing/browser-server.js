@@ -22,6 +22,8 @@ async function main() {
   if (live) {
     const fixture = { email: 'admin-' + randomUUID() + '@example.com', password: randomBytes(24).toString('base64url') };
     await instance.runtime.auth.register({ fullName: 'Browser Test Administrator', ...fixture }, 'admin');
+    // Only the isolated test process exposes its loopback fixture URI, never app credentials.
+    fixture.databaseUri = replset.getUri('paynet_browser_tests');
     const file = path.join(__dirname, '..', '.npm-cache', 'browser-fixture.json');
     await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(fixture));
   }

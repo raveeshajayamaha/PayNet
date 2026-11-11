@@ -1,6 +1,49 @@
 # PayNet networking foundation — M3-01
 
-This is a development/test networking demo, not a live payment system. It has no database dependency, authentication, balance updates, payment processing, or user-room subscriptions.
+## Current integrated networking architecture
+
+The historical M3 foundation below remains a database-independent development
+demo. The MongoDB backend introduced in `43f4e32` also supplies authenticated
+virtual payments; the following describes its integrated networking path.
+
+| Namespace | Authentication and purpose | Publication |
+| --- | --- | --- |
+| `/` | Existing development/test networking gate; diagnostics and nonfinancial originating-socket tests | Existing root handlers; financial publisher disabled by default |
+| `/payments` | Exact allowed browser origin, verified HttpOnly session cookie, expiry/revocation checks | Existing versioned publisher scoped to this namespace; persisted ownership checked per delivery |
+
+`backend/socket/payments.js` installs `runtime.publish` for the post-commit
+payment service hook. It emits only the shared version-1 notification contracts
+(`EVENTS.PAYMENT_COMPLETED`, `EVENTS.PAYMENT_FAILED`, `EVENTS.NOTIFICATION`).
+Payloads are validated by `backend/services/notificationContracts.js`; the
+frontend uses the shared contract through `subscribeNotifications`. Legacy
+unversioned payment/wallet aliases are no longer emitted. See
+[TEAM_INTEGRATION.md](TEAM_INTEGRATION.md) for exact integration seams and
+[PAYMENT_INTEGRATION_CHECKLIST.md](PAYMENT_INTEGRATION_CHECKLIST.md) for payloads.
+
+Clients cannot select recipients, join private rooms, or request payment writes
+through sockets. Existing CORS/transport limits remain; `/payments` rejects
+incoming application events, applies the 4 KiB application limit and per-socket
+rate limiter, and cleans up its timer/listener on disconnect. Verification uses
+the existing bounded publisher, with revocation rechecked before each notice.
+
+`frontend/src/services/paymentConnection.js` reuses the foundation lifecycle
+manager: finite backoff retries, permanent authorization blocking, exact listener
+cleanup and notification-ID deduplication. AppContext owns its account lifecycle.
+Reconnect and events refresh authenticated API state; polling every 20 seconds
+and focus/online reconciliation recover missed invalidations. These triggers do
+not bypass the reconnect budget. The UI exposes explicit reconnect when needed.
+Account generations and AbortSignals prevent stale private pagination/refresh
+responses from crossing sessions.
+
+Socket.IO delivery is best effort. There is no durable outbox, cursor replay or
+exactly-once guarantee. HTTP persisted state and scoped idempotent retries are
+authoritative. Pending keys survive ambiguous errors for both transfers and
+development funding; see the checklist before changing their lifecycle.
+
+Executed checks and commands: [PAYMENT_NETWORKING_VERIFICATION.md](PAYMENT_NETWORKING_VERIFICATION.md).
+The remaining sections document the historical foundation and M3 milestones;
+their statements about unavailable authentication/payment APIs refer to those
+snapshots, not the current `/payments` integration.
 
 ## Repository baseline
 
