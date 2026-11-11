@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "playwright test",
+    "test:live": "playwright test --config playwright.live.config.js",
     "test:unit": "node --test unit/*.test.js"
   },
   "dependencies": {

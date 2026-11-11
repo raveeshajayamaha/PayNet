@@ -32,7 +32,7 @@ test('disconnect cancels diagnostics and navigation removes the old run', async 
   await expect(page.getByTestId('latency-result')).toContainText('Stopped.');
   await expect(page.getByRole('alert')).toContainText('Connection lost.');
   await page.getByRole('link', { name: 'PayNet / Network lab' }).click();
-  await expect(page).toHaveURL('http://localhost:5173/');
+  await expect(page).toHaveURL(new URL('/', test.info().project.use.baseURL).href);
   // Wait for the lazy destination to mount before navigating back.
   await expect(page.getByTestId('latency-result')).toHaveCount(0);
   await page.goBack();

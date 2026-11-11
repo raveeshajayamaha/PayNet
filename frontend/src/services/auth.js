@@ -1,8 +1,8 @@
-import { unavailable } from "./api";
-// No auth routes exist yet. Wire these methods only after agreeing the server contract.
+import { unavailable, demoMode, apiRequest, jsonRequest } from "./api";
 export const authService = {
-  login: unavailable,
-  register: unavailable,
-  logout: unavailable,
-  changePassword: unavailable,
+  login: demoMode ? unavailable : ({ email, password, terms }) => jsonRequest('/api/auth/login', 'POST', { email, password, rememberMe: Boolean(terms) }),
+  register: demoMode ? unavailable : ({ name, email, password }) => jsonRequest('/api/auth/register', 'POST', { fullName: name, email, password }),
+  me: () => apiRequest('/api/auth/me'),
+  logout: () => jsonRequest('/api/auth/logout', 'POST'),
+  changePassword: demoMode ? unavailable : ({ current, next }) => jsonRequest('/api/users/change-password', 'PATCH', { currentPassword: current, newPassword: next }),
 };

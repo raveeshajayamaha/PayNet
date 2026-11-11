@@ -1,5 +1,5 @@
 ﻿import { useState } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   ArrowUpRight,
@@ -70,7 +70,7 @@ export function Footer() {
           </div>
           <div>
             <strong>Explore PayNet</strong>
-            <Link to="/dashboard">Demo dashboard</Link>
+            <Link to="/dashboard">{demoMode ? 'Demo dashboard' : 'Your dashboard'}</Link>
             <a href="/#features">Our features</a>
             <a href="/#how-it-works">How it works</a>
           </div>
@@ -78,7 +78,7 @@ export function Footer() {
             <strong>Your account</strong>
             <Link to="/login">Log in</Link>
             <Link to="/register">Create an account</Link>
-            <Link to="/admin">Admin demo</Link>
+            <Link to="/admin">{demoMode ? 'Admin demo' : 'Admin workspace'}</Link>
           </div>
           <div>
             <strong>Built for learning</strong>
@@ -155,6 +155,13 @@ export function AuthLayout() {
   );
 }
 export function Sidebar({ admin = false, open, close }) {
+  const { logout } = useApp();
+  const navigate = useNavigate();
+  const [error, setError] = useState('');
+  async function signOut() {
+    try { await logout(); navigate('/login', { replace: true }); }
+    catch (failure) { setError(failure.message); }
+  }
   return (
     <>
       <button
@@ -188,16 +195,17 @@ export function Sidebar({ admin = false, open, close }) {
               Visit the guide <ArrowUpRight size={15} />
             </Link>
           </div>
-          <Link className="exit-link" to="/">
+          {demoMode ? <Link className="exit-link" to="/">
             <LogOut size={18} /> Exit preview
-          </Link>
+          </Link> : <button className="exit-link" onClick={signOut}><LogOut size={18} /> Log out</button>}
+          {error && <p className="error" role="alert">{error}</p>}
         </div>
       </aside>
     </>
   );
 }
 export function Topbar({ onMenu, admin }) {
-  const { user, notifications } = useApp();
+  const { user, notifications, unreadCount } = useApp();
   return (
     <header className="topbar">
       <div className="flex items-center gap-3">
@@ -215,7 +223,7 @@ export function Topbar({ onMenu, admin }) {
       </div>
       <div className="topbar-right">
         <span className="demo-chip">
-          {demoMode ? "Demo workspace" : "Backend required"}
+          {demoMode ? "Demo workspace" : "Virtual account"}
         </span>
         <Link
           className="icon-button notification-link"
@@ -223,7 +231,7 @@ export function Topbar({ onMenu, admin }) {
           aria-label="Notifications"
         >
           <Bell size={20} />
-          {notifications.some((n) => !n.read) && <i />}
+          {(demoMode ? notifications.some((n) => !n.read) : unreadCount > 0) && <i />}
         </Link>
         <Link className="user-menu" to="/profile">
           <span className="avatar">
@@ -243,6 +251,7 @@ export function Topbar({ onMenu, admin }) {
   );
 }
 export function DashboardLayout({ admin = false }) {
+  const { dataError, refresh, networkStatus } = useApp();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   return (
@@ -252,9 +261,9 @@ export function DashboardLayout({ admin = false }) {
         <Topbar admin={admin} onMenu={() => setOpen(true)} />
         <main className="workspace-content" data-page={location.pathname} key={location.pathname}>
           <div className="demo-banner">
-            <span className="status-dot" /> Demo preview · All balances,
-            transactions and analytics are sample data. No real money moves.
+            <span className="status-dot" /> {demoMode ? 'Demo preview · All balances, transactions and analytics are sample data. No real money moves.' : `Virtual account · Server-confirmed activity · Live updates ${networkStatus}. No bank funds are involved.`}
           </div>
+          {!demoMode && dataError && <div className="notice" role="alert">{dataError} <button className="text-button" onClick={() => refresh()}>Retry</button></div>}
           <Outlet />
         </main>
         <div className="workspace-footer">

@@ -10,11 +10,12 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. Run the existing backend separately (`cd backend`, `npm run dev`) for the health check. PostgreSQL is not needed for UI previews.
+Open http://localhost:5173. Run the backend separately (`cd backend`, `npm run dev`) for the health check. With `MONGODB_URI` unset, development previews work without a database. See [MongoDB setup](../docs/MONGODB.md) to connect the database.
 
 Copy `.env.example` to `.env` when changing configuration:
 - `VITE_API_URL=http://localhost:5000` is the backend origin without `/api`.
-- `VITE_DEMO_MODE=true` enables demo user/admin routes. Set `false` to disable preview access. Restart Vite after environment changes.
+- `VITE_DEMO_MODE=false` (default) enables real virtual accounts, authenticated routes and backend data. Set `true` explicitly to retain the original sample preview. Restart Vite after environment changes.
+- `VITE_SOCKET_URL=http://localhost:5000` is the shared Socket.IO server origin. Financial updates use its authenticated `/payments` namespace.
 
 ## Pages
 
@@ -33,40 +34,48 @@ Copy `.env.example` to `.env` when changing configuration:
 - `src/index.css`: design system, responsive pages and reduced-motion support.
 - `vite.config.js`, `.env.example`, package files, `public/favicon.svg` and local `public/images/` assets.
 
-## Demo and integration boundaries
+## Connected data and sample preview
 
-Only `GET /api/health` exists and is called by Check connection in user/admin dashboards. Other service methods intentionally reject with a backend-unavailable message. No invented endpoints are called. Confirmation never changes balances or fabricates a payment. CSV export is labeled demo data. Profile edits and notification read markers reset on reload. No credentials are stored in localStorage.
+With sample mode disabled, login/register use the real API, dashboards load wallet summaries, sends require committed server confirmation, transaction search/filter/pagination use owned backend history, notifications persist read markers, profiles save full names, password changes rotate sessions and the admin page loads authorized statistics. Existing form/modal design, images, navigation and responsive layouts are retained.
 
-ProtectedRoute and AdminRoute control demo navigation only; they are not authentication or authorization. With demo mode disabled, workspace routes redirect to login. Real sign-in and authorized data loading must be implemented before enabling a live workspace. A health response says nothing about database, payment or identity availability.
+The API client includes the HttpOnly cookie, exact request headers and an in-memory CSRF token. No JWT/password is stored in localStorage or sessionStorage. Authenticated route guards wait for `/api/auth/me`; the backend independently authorizes every protected operation. Logout revokes the server session. The existing health panel reports API liveness; `/api/db-health` separately reports database readiness.
 
-Backend requirements: registration, JWT session lifecycle, user/admin authorization, wallet lookup, atomic transfers, transaction query/pagination, profile/password changes, notification persistence and Socket.IO events, administration and telemetry.
+Unconfirmed payment keys/payloads are retained in this tab's sessionStorage, scoped to the signed-in user, so a reload can retry the same request safely. They are removed after a confirmed outcome. No success appears until the backend returns a COMPLETED transaction. Lost responses show an unconfirmed outcome and a same-key retry action.
+
+Socket.IO refetches committed state after live events and reconnects, with periodic resynchronization and actionable network errors. A controlled development funding button appears only when enabled by the backend, with a lifetime cap. [Backend setup and API documentation](../backend/README.md) describes account creation, funding, replica sets and admin provisioning.
+
+With `VITE_DEMO_MODE=true`, the original fictional dashboard, sample CSV, in-memory profile and unavailable financial actions remain intact. Demo/sample labels distinguish this preview from connected virtual account data.
 
 ## Checks
 
 ```powershell
 npm run lint
 npm run build
-npm run preview
+npm run test:unit
+npm test
+npm run test:live
 ```
 
-Hosting must rewrite unknown application routes to `index.html` for deep links. Google Fonts requires internet and falls back to system fonts. Photography is local; credits and license appear in `public/images/CREDITS.md`. Backend and database files are unchanged.
+Hosting must rewrite unknown application routes to `index.html` for deep links. Google Fonts requires internet and falls back to system fonts. Photography is local; credits and license appear in `public/images/CREDITS.md`.
 
-## Verified results
+## Current verification
 
 - `npm run lint`: passed without warnings.
 - `npm run build`: passed; code-split bundles stay below Vite's chunk-size warning threshold.
-- `npx playwright test`: 8 browser tests passed using local Microsoft Edge.
+- `npm run test:unit`: 18 frontend unit tests passed.
+- `npm test`: all 15 original browser regressions passed using Microsoft Edge.
+- `npm run test:live`: 3 live browser scenarios passed against isolated real MongoDB, including registration, funding, transfers, reconnect catch-up, notification persistence, profile/password changes, logout, admin login and lost-response retry after reload.
 - All 11 page types rendered without JavaScript runtime exceptions.
 - Desktop, 390px mobile, and additional 320px/768px/1024px checks passed; mobile menus and sidebars work.
 - Local photographs loaded; transaction filtering, pagination, CSV download and details passed.
 - Transfer validation, Escape dismissal, unavailable-payment result, login/register validation, memory-only profile changes, notification read states and empty state passed.
 - Existing `/api/health` responded successfully through the dashboard; simulated network failure showed an actionable message.
 
-Browser tests require the frontend and backend to be running. `playwright.config.js` currently targets the Microsoft Edge executable installed on this Windows machine; adapt `executablePath` for another machine or an installed Playwright browser.
+Browser commands start their own isolated frontend/backend servers. Original sample regressions use ports 5175/5003; live tests use 5174/5002. They do not reuse development servers on 5173/5000. The configurations target Microsoft Edge on this Windows machine; adapt `executablePath` for another machine or an installed Playwright browser.
 
-Remaining limitations are intentional backend boundaries, not simulated successes: no real accounts, payments, persistent profile/notification updates, admin mutations, database telemetry or real-time events. Google Fonts falls back to system fonts offline. This checkout has no Git metadata, so no commit or Git diff was created.
+Accounts, virtual payments, profile/read-marker persistence, admin monitoring and live events now use the backend. Actual bank payments, distributed socket adapters and durable event outboxes are outside this educational application. Google Fonts falls back to system fonts offline. No commit or push is performed by this task.
 
-## Task 03.2 visual enhancement
+## Historical Task 03.2 visual enhancement
 
 All existing pages now share a navy, royal blue, cyan and restrained violet visual system. `src/visual-enhancements.css`, imported after the base stylesheet, holds the visual layer without duplicating pages or changing service behavior. Authentication uses separate local photographic backgrounds; workspace route headers use matching photos or original financial-flow artwork. Cards, transaction states, notifications, profile details, modal surfaces, forms and 404 have been refined. Hover effects retain reduced-motion support, and smaller screens receive stacked layouts and readable banners.
 

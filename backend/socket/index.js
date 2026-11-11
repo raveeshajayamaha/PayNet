@@ -3,10 +3,11 @@ const EVENTS = require('./events');
 const registerHandlers = require('./handlers');
 const { createNotificationPublisher } = require('../services/notificationPublisher');
 const { createSocketConfig } = require('./config');
-module.exports = function initializeSocket(server, { environment, frontendUrl, allowedOrigins, logger = console, authenticateSocket, authorizeNotification }) {
-  const config = createSocketConfig({ environment, frontendUrl, allowedOrigins });
+module.exports = function initializeSocket(server, { environment, frontendUrl, allowedOrigins, logger = console, authenticateSocket, authorizeNotification, paymentsEnabled = false }) {
+  const config = createSocketConfig({ environment, frontendUrl, allowedOrigins, paymentsEnabled });
   if (!config) return null;
   const io = new Server(server, config);
+  if (!['development', 'test'].includes(environment)) io.use((socket, next) => next(new Error('Use the authenticated payments namespace.')));
   io.notificationPublisher = createNotificationPublisher({ io, authenticateSocket, authorizeNotification });
   io.on('connection', (socket) => {
     const disposeHandlers = registerHandlers(socket, { environment });

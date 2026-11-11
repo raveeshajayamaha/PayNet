@@ -151,7 +151,7 @@ test("auth validates and unavailable backend is explained", async ({
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
 });
 test("existing backend health integration", async ({ page, request }) => {
-  const response = await request.get("http://localhost:5000/api/health");
+  const response = await request.get("http://localhost:5003/api/health");
   expect(response.ok()).toBe(true);
   expect((await response.json()).success).toBe(true);
   await page.goto("/dashboard");

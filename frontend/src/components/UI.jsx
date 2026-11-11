@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { demoMode, checkHealth } from "../services/api";
 import { money } from "../data/demo";
+import { useApp } from '../context/useApp';
+import { moneyCents } from '../services/liveData';
 export function Logo() {
   return (
     <Link to="/" className="logo">
@@ -69,11 +71,11 @@ export function BalanceCard({ user }) {
     <section className="balance-card">
       <div className="flex justify-between items-center">
         <span>
-          Available balance <span className="mini-pill">DEMO</span>
+          Available balance <span className="mini-pill">{user.real ? 'VIRTUAL' : 'DEMO'}</span>
         </span>
         <Wallet />
       </div>
-      <h2>{money(user.balance)}</h2>
+      <h2>{user.real ? moneyCents(user.balanceCents) : money(user.balance)}</h2>
       <span>PayNet virtual wallet · LKR</span>
       <div className="balance-bottom">
         <span>{user.wallet}</span>
@@ -122,9 +124,9 @@ export function ConfirmModal({
       ref={ref}
       aria-labelledby={titleId}
       className="modal"
-      onCancel={onClose}
+      onCancel={(event) => { if (busy) event.preventDefault(); else onClose(); }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!busy && e.target === e.currentTarget) onClose();
       }}
     >
       <div className="modal-head">
@@ -183,10 +185,14 @@ export function FormInput({ label, id, type = "text", error, ...props }) {
   );
 }
 export function ProtectedRoute({ children }) {
-  return demoMode ? children : <Navigate to="/login" replace />;
+  const { user, authLoading } = useApp();
+  if (authLoading) return <div className="empty" role="status">Loading your session...</div>;
+  return demoMode || user ? children : <Navigate to="/login" replace />;
 }
 export function AdminRoute({ children }) {
-  return demoMode ? children : <Navigate to="/login" replace />;
+  const { user, authLoading } = useApp();
+  if (authLoading) return <div className="empty" role="status">Loading your session...</div>;
+  return demoMode || user?.role === 'admin' ? children : <Navigate to={user ? '/dashboard' : '/login'} replace />;
 }
 export function HealthPanel() {
   const [status, setStatus] = useState("Not checked"),
@@ -234,14 +240,14 @@ export function NotificationItem({ item, onRead }) {
       </span>
       <div>
         <strong>
-          {item.type === "incoming"
+          {item.real ? item.title : item.type === "incoming"
             ? "Sample payment received"
             : "Sample payment sent"}
         </strong>
         <p>
-          {money(item.amount)} · {item.name}
+          {item.real ? item.message : `${money(item.amount)} · ${item.name}`}
         </p>
-        <small>{item.date} · Demo notification</small>
+        <small>{item.date} · {item.real ? 'Virtual account notification' : 'Demo notification'}</small>
       </div>
       {!item.read && (
         <button className="text-button" onClick={onRead}>
@@ -294,7 +300,7 @@ export function TransactionTable({ rows, compact = false }) {
                   className={`amount-cell ${t.type === "incoming" ? "positive" : ""}`}
                 >
                   {t.type === "incoming" ? "+" : "-"}
-                  {money(t.amount)}
+                  {t.real ? moneyCents(t.amountCents) : money(t.amount)}
                 </td>
                 <td>
                   <button
@@ -321,10 +327,10 @@ export function TransactionTable({ rows, compact = false }) {
           onClose={() => setSelected(null)}
         >
           <div className="notice">
-            Sample transaction — no real payment occurred.
+            {selected.real ? 'Recorded virtual transaction. No bank funds are involved.' : 'Sample transaction — no real payment occurred.'}
           </div>
           <dl className="details">
-            {Object.entries(selected).map(([k, v]) => (
+            {Object.entries(selected).filter(([k]) => k !== 'real').map(([k, v]) => (
               <div key={k}>
                 <dt>{k}</dt>
                 <dd>{k === "amount" ? money(v) : v}</dd>

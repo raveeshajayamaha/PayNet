@@ -28,7 +28,10 @@ test('HTTP health endpoint remains available independently of database', async (
   const { url } = await start(t);
   const response = await fetch(`${url}/api/health`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { success: true, message: 'PayNet API is running' });
+  const body = await response.json();
+  assert.equal(body.success, true);
+  assert.equal(body.message, 'PayNet API is running');
+  assert.deepEqual(body.database, { provider: 'mongodb', status: 'disconnected', initialized: false });
 });
 test('simultaneous clients receive count updates and disconnection updates', async (t) => {
   const { url, io } = await start(t);

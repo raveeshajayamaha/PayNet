@@ -1,6 +1,11 @@
 # PayNet networking: team integration handover
 
-**Status:** M3-01 through M3-04 are implemented and verified. Networking works without PostgreSQL or unfinished payment APIs. This handover does not claim authenticated payments or banking integration. Read [FINAL_NETWORKING_VERIFICATION.md](./FINAL_NETWORKING_VERIFICATION.md) for final checks and Git review, [NETWORKING.md](./NETWORKING.md) for protocol details, and [NETWORK_SECURITY.md](./NETWORK_SECURITY.md) for security boundaries.
+> Historical M3 handover. Task 04 now implements authenticated virtual payments and
+> the connected frontend. Use [backend/README.md](../backend/README.md) and the
+> root README for current startup, API and `/payments` namespace instructions.
+> The descriptions below of missing payment/authentication work refer to the M3 snapshot.
+
+**Status:** M3-01 through M3-04 are implemented and verified. Networking works independently of the database and unfinished payment APIs. The [MongoDB foundation](./MONGODB.md) now provides connection configuration, models and transaction infrastructure. This handover does not claim authenticated payments or banking integration. Read [FINAL_NETWORKING_VERIFICATION.md](./FINAL_NETWORKING_VERIFICATION.md) for the historical networking checks and Git review, [NETWORKING.md](./NETWORKING.md) for protocol details, and [NETWORK_SECURITY.md](./NETWORK_SECURITY.md) for security boundaries.
 
 ## Architecture and entry points
 
@@ -18,7 +23,8 @@ committed payment outcome -> publishToUser -> only that user's verified live soc
 
 | Actual entry point | Responsibility |
 | --- | --- |
-| `backend/server.js`: `createPayNetServer(options)` | Returns `{app, server, io}`. HTTP health remains `/api/health`; default startup port 5000. |
+| `backend/server.js`: `createPayNetServer(options)` | Returns `{app, server, io}` without connecting a database or starting HTTP. HTTP liveness remains `/api/health`. |
+| `backend/server.js`: `startPayNetServer(options)` | Connects/initializes MongoDB before listening (default port 5000); returns `{app, server, io, close}`. `close()` also disconnects MongoDB. |
 | `backend/socket/index.js`: exported initializer | Attaches Socket.IO to that HTTP server and exposes `io.notificationPublisher`. |
 | `backend/socket/config.js`: `createSocketConfig` | Development/test gate, exact origin list, transport limits. Production/staging return no Socket.IO server. |
 | `backend/socket/events.js`, `handlers.js`, `validation.js` | Server-defined request protocol, shape/byte/rate validation, handlers and cleanup. |
@@ -150,9 +156,9 @@ server.listen(5000);
 
 Use this **instead of**, not in addition to, the first bootstrap example. Socket.IO automatically removes room membership on disconnect; reconnect must verify again. Do not add a client-controlled `join`, `subscribe`, or room-name endpoint. This room association does not change the current publisher and is not a permission check by itself. Do not replace per-session reauthorization with an unconditional `io.to(room).emit`: revoked sessions still need denial and termination. If the team later optimizes publication using rooms or adds a distributed adapter, keep equivalent ownership/revocation checks and extend the privacy/reconnect tests. See [Socket.IO rooms](https://socket.io/docs/v4/rooms/).
 
-## Publish only after Member 2's PostgreSQL commit
+## Publish only after Member 2's MongoDB transaction commits
 
-Payment processing and SQL are deliberately absent here. Member 2 should invoke the existing publisher only after their real transaction has successfully committed. No Socket.IO handler should perform a transfer or trust a client assertion that a payment completed.
+Payment processing is absent here. The [MongoDB foundation](./MONGODB.md) now supplies models, connection configuration and `withDatabaseTransaction`; Member 2 should invoke the existing publisher only after that helper's promise successfully resolves for a real authorized payment. Its callback may be retried, so publication must remain outside the callback. No Socket.IO handler should perform a transfer or trust a client assertion that a payment completed.
 
 This fragment uses actual exports and the actual publisher. The three data bindings must come from committed server records, not request-body recipients or client-generated outcome events:
 
@@ -182,7 +188,7 @@ if (io && validateNotification(EVENTS.PAYMENT_COMPLETED, payload)) {
 ### Avoid duplicate payment notifications
 
 1. Persist one stable notification ID per committed transaction/outcome/recipient. Reuse it on retries; do not generate a fresh random ID every time a payment handler is retried.
-2. Member 2 should design payment idempotency and, where durable delivery matters, an outbox entry committed with the payment. A post-commit emit alone has a crash gap. No outbox/schema/transaction work is implemented here.
+2. Member 2 should design payment idempotency and, where durable delivery matters, an outbox entry committed with the payment. A post-commit emit alone has a crash gap. The MongoDB model/transaction foundation exists; payment logic and an outbox remain unimplemented.
 3. Choose one server publication owner. Do not publish from both a REST response handler and a client acknowledgment, or from both a payment service and an independent listener without deduplication.
 4. The frontend deduplicates the latest 200 IDs per event per live subscription, and the development test feed is separately capped at 100. This is bounded session-level protection, not database idempotency or exactly-once delivery. A reload may accept an ID again.
 5. Reconnection does not replay missed messages today. Future persistence/read APIs and authenticated catch-up must use the same IDs. Do not blindly replay partial-success publication results to every session.
@@ -205,7 +211,8 @@ Temporary transport failures retry with 500 ms initial base delay, 5-second maxi
 - [x] Limits, origin policy, safe logging and production demo restrictions
 - [ ] Real JWT/session verification, credential refresh and revocation policy — Member 2
 - [ ] Real recipient/transaction authorization — Member 2
-- [ ] PostgreSQL payment commit hooks, payment idempotency and durable outbox — Member 2
+- [x] MongoDB configuration, models, indexes and session/transaction infrastructure
+- [ ] MongoDB payment commit hooks, payment idempotency and durable outbox — Member 2
 - [ ] Authenticated financial notification persistence/read/catch-up and account-switch state
 - [ ] Optional verified-user rooms / distributed routing, with equivalent reauthorization
 - [ ] Reviewed production Socket.IO initialization, TLS/WSS and authenticated frontend lifecycle

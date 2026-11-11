@@ -1,7 +1,7 @@
-import { unavailable } from "./api";
-// Server-side admin authorization is required before any admin integration.
+import { apiRequest, queryString } from './api';
 export const adminService = {
-  overview: unavailable,
-  users: unavailable,
-  updateUser: unavailable,
+  overview: () => apiRequest('/api/admin/dashboard'),
+  users: (options) => apiRequest(`/api/admin/users?${queryString(options)}`),
+  transactions: (options) => apiRequest(`/api/admin/transactions?${queryString(options)}`),
+  health: () => apiRequest('/api/admin/system-health'),
 };

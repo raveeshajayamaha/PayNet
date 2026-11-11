@@ -6,5 +6,7 @@ dist/
 *.log
 .DS_Store
 .npm-cache/
+.mongodb-binaries/
+.mongodb-data/
 test-results/
 playwright-report/

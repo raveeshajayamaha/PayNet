@@ -1,5 +1,5 @@
 ﻿import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArrowUpRight, Check } from "lucide-react";
 import {
   FormInput,
@@ -9,7 +9,10 @@ import {
 } from "../components/UI";
 import { authService } from "../services/auth";
 import { demoMode } from "../services/api";
+import { useApp } from '../context/useApp';
 export default function Auth({ register = false }) {
+  const { signIn, dataError } = useApp();
+  const navigate = useNavigate();
   const [values, setValues] = useState({
       name: "",
       email: "",
@@ -49,7 +52,9 @@ export default function Auth({ register = false }) {
     setBusy(true);
     setMessage("");
     try {
-      await authService[register ? "register" : "login"](values);
+      const result = await authService[register ? "register" : "login"](values);
+      await signIn(result);
+      navigate(result.user.role === 'admin' ? '/admin' : '/dashboard', { replace: true });
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -72,6 +77,7 @@ export default function Auth({ register = false }) {
           : "Your money. Your connections. All in one place."}
       </p>
       <form onSubmit={submit} noValidate>
+        {!demoMode && dataError && <p className="notice" role="alert">{dataError}</p>}
         {register && (
           <FormInput
             label="Full name"
@@ -145,7 +151,7 @@ export default function Auth({ register = false }) {
               </button>
             </span>
           ) : (
-            "Remember me (available with backend authentication)"
+            demoMode ? "Remember me (available with backend authentication)" : "Remember me on this device"
           )}
         </label>
         {errors.terms && <p className="error">{errors.terms}</p>}
@@ -176,10 +182,7 @@ export default function Auth({ register = false }) {
       {termsOpen && (
         <ConfirmModal title="Demo terms" onClose={() => setTermsOpen(false)}>
           <p>
-            This university prototype uses fictional users and virtual funds. No
-            account is created and no credentials are saved. Please do not enter
-            a real banking password. Real authentication and payment processing
-            require future backend implementation.
+            {demoMode ? 'This university prototype uses fictional users and virtual funds. No account is created and no credentials are saved. Please do not enter a real banking password. Real authentication and payment processing require future backend implementation.' : 'PayNet is an educational virtual payment system. Account details and virtual transfers are stored on the server. No real bank funds are used. Choose a unique password.'}
           </p>
         </ConfirmModal>
       )}

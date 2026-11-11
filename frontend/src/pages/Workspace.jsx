@@ -1,5 +1,11 @@
 ﻿import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useRef } from 'react';
+import { demoMode, queryString } from '../services/api';
+import { useRemoteData } from '../hooks/useRemoteData';
+import { displayRupees, mapTransaction, parseCents, moneyCents } from '../services/liveData';
+import { readPending, savePending, clearPending } from '../services/pendingPayments';
+import { walletService } from '../services/wallets';
 import {
   AreaChart,
   Area,
@@ -40,17 +46,19 @@ import {
 } from "../components/UI";
 import { transactionService } from "../services/transactions";
 import { authService } from "../services/auth";
-export function ActivityChart({ bars = false }) {
+export function ActivityChart({ bars = false, data }) {
+  const { summary } = useApp();
+  const chartData = demoMode ? activity : (data || summary?.activity || []).map((row) => ({ month: row.month, received: displayRupees(row.receivedCents), sent: displayRupees(row.sentCents) }));
   const Chart = bars ? BarChart : AreaChart;
   return (
     <div
       className="chart"
       role="img"
-      aria-label="Sample monthly received and sent amounts, June to November 2026"
+      aria-label={demoMode ? 'Sample monthly received and sent amounts, June to November 2026' : 'Recorded monthly virtual payment activity'}
     >
       <ResponsiveContainer width="100%" height="100%">
         <Chart
-          data={activity}
+          data={chartData}
           margin={{ top: 15, right: 8, left: 0, bottom: 0 }}
         >
           <CartesianGrid
@@ -115,7 +123,25 @@ export function ActivityChart({ bars = false }) {
   );
 }
 export function Dashboard() {
-  const { user } = useApp();
+  const { user, summary, refresh } = useApp();
+  const [fundMessage, setFundMessage] = useState('');
+  const [fundBusy, setFundBusy] = useState(false);
+  const [savedFunding] = useState(() => demoMode ? null : readPending('fund', user.id));
+  const [fundUncertain, setFundUncertain] = useState(Boolean(savedFunding));
+  const fundingAttempt = useRef(savedFunding);
+  async function fund() {
+    if (!fundingAttempt.current) fundingAttempt.current = { key: crypto.randomUUID(), input: { amountCents: Math.min(100000, summary.demoFundingRemainingCents) } };
+    setFundBusy(true);
+    try {
+      savePending('fund', user.id, fundingAttempt.current);
+      await walletService.fund(fundingAttempt.current.input.amountCents, fundingAttempt.current.key);
+      clearPending('fund', user.id); fundingAttempt.current = null; setFundUncertain(false); setFundMessage('Demo funds added.'); await refresh();
+    } catch (error) {
+      if (error.status >= 400 && error.status < 500) { clearPending('fund', user.id); fundingAttempt.current = null; }
+      setFundUncertain(Boolean(fundingAttempt.current));
+      setFundMessage(error.message + (fundingAttempt.current ? ' Retry to confirm the same funding request.' : ''));
+    } finally { setFundBusy(false); }
+  }
   return (
     <>
       <PageHeader
@@ -132,26 +158,32 @@ export function Dashboard() {
         <BalanceCard user={user} />
         <StatCard
           title="Total sent"
-          value={money(36500)}
+          value={demoMode ? money(36500) : moneyCents(summary?.totalSentCents)}
           icon={ArrowUpRight}
-          caption="This month · Sample outgoing transfers"
+          caption={demoMode ? 'This month · Sample outgoing transfers' : 'Completed outgoing virtual transfers'}
         />
         <StatCard
           title="Total received"
-          value={money(58000)}
+          value={demoMode ? money(58000) : moneyCents(summary?.totalReceivedCents)}
           icon={ArrowDownLeft}
           tone="teal"
-          caption="This month · Sample incoming transfers"
+          caption={demoMode ? 'This month · Sample incoming transfers' : 'Completed incoming virtual funds'}
         />
       </div>
+      {!demoMode && !summary && <p className="notice" role="status">Loading wallet activity...</p>}
+      {!demoMode && summary?.demoFundingEnabled && <section className="card mt-6">
+        <h2>Development virtual funds</h2><p>Limited to LKR 10,000 per wallet over its lifetime.</p>
+        <button className="button secondary" disabled={fundBusy || (!fundUncertain && summary.demoFundingRemainingCents === 0)} onClick={fund}>{fundBusy ? 'Confirming...' : fundUncertain ? 'Retry demo funding' : 'Add demo funds'}</button>
+        {fundMessage && <p role="status">{fundMessage}</p>}
+      </section>}
       <div className="dashboard-middle">
         <section className="card">
           <div className="card-heading">
             <div>
               <h2>Money in motion</h2>
-              <p>Your monthly transaction activity · Sample LKR amounts</p>
+              <p>{demoMode ? 'Your monthly transaction activity · Sample LKR amounts' : 'Your recorded virtual transaction activity · LKR'}</p>
             </div>
-            <span className="period-label">Jun – Nov 2026</span>
+            <span className="period-label">{demoMode ? 'Jun – Nov 2026' : 'Recent months'}</span>
           </div>
           <div className="chart-legend">
             <span>● Received</span>
@@ -199,21 +231,24 @@ export function Dashboard() {
         <div className="card-heading">
           <div>
             <h2>Recent transactions</h2>
-            <p>A quick look at your sample activity</p>
+            <p>{demoMode ? 'A quick look at your sample activity' : 'A quick look at your recorded activity'}</p>
           </div>
           <Link className="text-button" to="/transactions">
             View all <ArrowUpRight size={16} />
           </Link>
         </div>
-        <TransactionTable rows={transactions.slice(0, 5)} compact />
+        <TransactionTable rows={demoMode ? transactions.slice(0, 5) : summary?.recentTransactions || []} compact />
       </section>
       <HealthPanel />
     </>
   );
 }
 export function SendMoney() {
-  const { user } = useApp();
-  const [form, setForm] = useState({ email: "", amount: "", description: "" }),
+  const { user, refresh } = useApp();
+  const [savedAttempt] = useState(() => demoMode ? null : readPending('transfer', user.id));
+  const attempt = useRef(savedAttempt);
+  const [uncertain, setUncertain] = useState(Boolean(savedAttempt));
+  const [form, setForm] = useState(savedAttempt ? { email: savedAttempt.input.recipientEmail, amount: displayRupees(savedAttempt.input.amountCents).toFixed(2), description: savedAttempt.input.description } : { email: "", amount: "", description: "" }),
     [errors, setErrors] = useState({}),
     [confirm, setConfirm] = useState(false),
     [busy, setBusy] = useState(false),
@@ -222,15 +257,23 @@ export function SendMoney() {
     value: form[key],
     onChange: (e) => setForm({ ...form, [key]: e.target.value }),
     error: errors[key],
+    disabled: uncertain || busy,
   });
   function submit(e) {
     e.preventDefault();
+    if (uncertain) { setConfirm(true); return; }
     const next = {};
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
       next.email = "Enter a valid recipient email.";
     if (form.email.toLowerCase() === user.email.toLowerCase())
       next.email = "Choose another recipient.";
-    if (!Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0)
+    if (!demoMode) {
+      try {
+        const amountCents = parseCents(form.amount);
+        if (amountCents > user.balanceCents) next.amount = 'Amount exceeds the available balance.';
+        attempt.current = { key: crypto.randomUUID(), input: { recipientEmail: form.email.trim().toLowerCase(), amountCents, description: form.description.trim() } };
+      } catch (error) { next.amount = error.message; }
+    } else if (!Number.isFinite(Number(form.amount)) || Number(form.amount) <= 0)
       next.amount = "Enter an amount greater than zero.";
     else if (Number(form.amount) > user.balance)
       next.amount = "Amount exceeds the sample available balance.";
@@ -243,9 +286,21 @@ export function SendMoney() {
   async function send() {
     setBusy(true);
     try {
-      await transactionService.send(form);
+      if (!demoMode) savePending('transfer', user.id, attempt.current);
+      const response = await transactionService.send(demoMode ? form : attempt.current.input, attempt.current?.key);
+      if (response.transaction.status !== 'COMPLETED') throw new Error('The payment outcome is not confirmed.');
+      setResult('Payment completed. Reference ' + response.transaction.referenceNumber);
+      clearPending('transfer', user.id); setConfirm(false); setUncertain(false); attempt.current = null;
+      setForm({ email: '', amount: '', description: '' }); await refresh();
     } catch (e) {
-      setResult(`${e.message} No payment was made.`);
+      if (demoMode) setResult(`${e.message} No payment was made.`);
+      else if (e.status >= 400 && e.status < 500) {
+        setResult(e.message + (e.details?.referenceNumber ? ' Reference ' + e.details.referenceNumber : ''));
+        clearPending('transfer', user.id); setUncertain(false); attempt.current = null;
+      } else {
+        setUncertain(true);
+        setResult(e.message + ' Outcome unconfirmed. Retry this request to check the same payment; do not create a new payment.');
+      }
       setConfirm(false);
     } finally {
       setBusy(false);
@@ -277,13 +332,14 @@ export function SendMoney() {
               {...bind("amount")}
             />
             <div className="balance-hint">
-              Sample available balance <strong>{money(user.balance)}</strong>
+              {demoMode ? 'Sample available balance' : 'Available virtual balance'} <strong>{demoMode ? money(user.balance) : moneyCents(user.balanceCents)}</strong>
             </div>
             <div className="field">
               <label htmlFor="description">What's it for? (optional)</label>
               <textarea
                 id="description"
                 maxLength={180}
+                disabled={uncertain || busy}
                 placeholder="Lunch, shared plans, or a little thank you…"
                 value={form.description}
                 onChange={(e) =>
@@ -292,11 +348,10 @@ export function SendMoney() {
               />
             </div>
             <div className="notice">
-              Demo preview. Confirming checks backend availability; it will not
-              transfer funds.
+              {demoMode ? 'Demo preview. Confirming checks backend availability; it will not transfer funds.' : 'Review carefully. Confirmation sends a server-controlled virtual payment.'}
             </div>
             <button className="button full">
-              Review transfer <ArrowUpRight size={18} />
+              {uncertain ? 'Retry pending transfer' : 'Review transfer'} <ArrowUpRight size={18} />
             </button>
           </form>
           {result && (
@@ -322,9 +377,9 @@ export function SendMoney() {
           onClose={() => setConfirm(false)}
           onConfirm={send}
           busy={busy}
-          confirmLabel="Check backend availability"
+          confirmLabel={demoMode ? 'Check backend availability' : uncertain ? 'Retry same payment' : 'Confirm virtual transfer'}
         >
-          <div className="notice">Demo transfer preview</div>
+          <div className="notice">{demoMode ? 'Demo transfer preview' : 'Virtual transfer confirmation'}</div>
           <dl className="details">
             <div>
               <dt>To</dt>
@@ -345,7 +400,8 @@ export function SendMoney() {
   );
 }
 export function ReceiveMoney() {
-  const { user } = useApp();
+  const { user, revision } = useApp();
+  const incoming = useRemoteData('/api/transactions?type=incoming&limit=5', !demoMode, revision);
   const [copy, setCopy] = useState("");
   async function copyDetails() {
     try {
@@ -407,7 +463,7 @@ export function ReceiveMoney() {
             ],
             [
               "Stay up to date",
-              "After backend integration, confirmed transfers will appear in your activity.",
+              demoMode ? "After backend integration, confirmed transfers will appear in your activity." : 'Confirmed virtual transfers appear instantly in your activity.',
             ],
           ].map(([title, copy], i) => (
             <div className="step" key={title}>
@@ -419,27 +475,31 @@ export function ReceiveMoney() {
             </div>
           ))}
           <div className="notice">
-            This is a sample account. Receiving payments requires backend wallet
-            and transaction services.
+            {demoMode ? 'This is a sample account. Receiving payments requires backend wallet and transaction services.' : 'Share your registered email. Only server-confirmed virtual payments will appear.'}
           </div>
         </section>
       </div>
       <section className="card mt-6">
         <h2>Recent incoming transactions</h2>
+        {!demoMode && incoming.loading && <p role="status">Loading incoming transactions...</p>}
+        {!demoMode && incoming.error && <p className="error" role="alert">{incoming.error} <button onClick={incoming.retry}>Retry</button></p>}
         <TransactionTable
-          rows={transactions.filter((t) => t.type === "incoming").slice(0, 5)}
+          rows={demoMode ? transactions.filter((t) => t.type === 'incoming').slice(0, 5) : (incoming.data?.items || []).map(mapTransaction)}
         />
       </section>
     </>
   );
 }
 export function Transactions() {
+  const { revision } = useApp();
+  const [dateTo, setDateTo] = useState(''), [sort, setSort] = useState('newest');
   const [search, setSearch] = useState(""),
     [type, setType] = useState(""),
     [status, setStatus] = useState(""),
     [date, setDate] = useState(""),
     [page, setPage] = useState(1);
-  const rows = transactions.filter(
+  const remote = useRemoteData('/api/transactions?' + queryString({ page, limit: 6, search, type, status: status.toUpperCase(), from: date, to: dateTo || date, sort }), !demoMode, revision);
+  const rows = demoMode ? transactions.filter(
     (t) =>
       `${t.name} ${t.email} ${t.id}`
         .toLowerCase()
@@ -447,8 +507,8 @@ export function Transactions() {
       (!type || t.type === type) &&
       (!status || t.status === status) &&
       (!date || t.date === date),
-  );
-  const count = Math.max(1, Math.ceil(rows.length / 6));
+  ) : (remote.data?.items || []).map(mapTransaction);
+  const count = demoMode ? Math.max(1, Math.ceil(rows.length / 6)) : remote.data?.pages || 1;
   const safePage = Math.min(page, count);
   function reset() {
     setSearch("");
@@ -456,11 +516,12 @@ export function Transactions() {
     setStatus("");
     setDate("");
     setPage(1);
+    setDateTo(''); setSort('newest');
   }
   function exportCsv() {
-    const quote = (v) => '"' + String(v).replaceAll('"', '""') + '"';
+    const quote = (v) => '"' + String(typeof v === 'string' && /^[=+@\-\t\r]/.test(v) ? "'" + v : v).replaceAll('"', '""') + '"';
     const data = [
-      ["DEMO DATA - NOT REAL PAYMENTS"],
+      [demoMode ? 'DEMO DATA - NOT REAL PAYMENTS' : 'RECORDED VIRTUAL PAYMENTS - CURRENT FILTERED PAGE'],
       ["id", "name", "type", "amount LKR", "status", "date"],
       ...rows.map((t) => [t.id, t.name, t.type, t.amount, t.status, t.date]),
     ]
@@ -471,7 +532,7 @@ export function Transactions() {
     );
     const a = document.createElement("a");
     a.href = url;
-    a.download = "paynet-demo-transactions.csv";
+    a.download = demoMode ? 'paynet-demo-transactions.csv' : 'paynet-virtual-transactions.csv';
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -481,11 +542,11 @@ export function Transactions() {
         title="Every connection, in view."
         action={
           <button className="button secondary" onClick={exportCsv}>
-            <Download size={18} /> Export sample CSV
+            <Download size={18} /> {demoMode ? 'Export sample CSV' : 'Export page CSV'}
           </button>
         }
       >
-        Explore and review your sample transaction history.
+        {demoMode ? 'Explore and review your sample transaction history.' : 'Explore and review your recorded virtual transaction history.'}
       </PageHeader>
       <section className="card">
         <div className="filters">
@@ -528,21 +589,29 @@ export function Transactions() {
           </select>
           <input
             type="date"
-            aria-label="Transaction date"
+            aria-label={demoMode ? 'Transaction date' : 'From date'}
             value={date}
             onChange={(e) => {
               setDate(e.target.value);
               setPage(1);
             }}
           />
+          {!demoMode && <>
+            <input type="date" aria-label="To date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} />
+            <select aria-label="Sort transactions" value={sort} onChange={(e) => { setSort(e.target.value); setPage(1); }}>
+              <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="amount-asc">Amount ascending</option><option value="amount-desc">Amount descending</option>
+            </select>
+          </>}
           <button className="text-button" onClick={reset}>
             Reset
           </button>
         </div>
-        <TransactionTable rows={rows.slice((safePage - 1) * 6, safePage * 6)} />
+        {!demoMode && remote.loading && <p role="status">Loading transactions...</p>}
+        {!demoMode && remote.error && <p role="alert" className="error">{remote.error} <button className="text-button" onClick={remote.retry}>Retry</button></p>}
+        <TransactionTable rows={demoMode ? rows.slice((safePage - 1) * 6, safePage * 6) : rows} />
         <div className="pagination">
           <span>
-            {rows.length} sample transactions · Page {safePage} of {count}
+            {demoMode ? rows.length + ' sample' : remote.data?.total || 0} transactions · Page {safePage} of {count}
           </span>
           <div>
             <button
@@ -566,7 +635,7 @@ export function Transactions() {
   );
 }
 export function Notifications() {
-  const { notifications, setNotifications, testNotifications, setTestNotifications } = useApp();
+  const { notifications, markRead, unreadCount, notificationPage, notificationPages, loadMoreNotifications, testNotifications, setTestNotifications } = useApp();
   const [unread, setUnread] = useState(false);
   const rows = notifications.filter((n) => !unread || !n.read);
   return (
@@ -576,16 +645,14 @@ export function Notifications() {
         action={
           <button
             className="button secondary"
-            disabled={notifications.every((n) => n.read)}
-            onClick={() =>
-              setNotifications(notifications.map((n) => ({ ...n, read: true })))
-            }
+            disabled={demoMode ? notifications.every((n) => n.read) : unreadCount === 0}
+            onClick={() => markRead()}
           >
             <Check size={17} /> Mark all as read
           </button>
         }
       >
-        Sample financial data. Authenticated financial updates await backend integration.
+        {demoMode ? 'Sample financial data. Authenticated financial updates await backend integration.' : 'Persisted account notifications and confirmed virtual payment updates.'}
       </PageHeader>
       {import.meta.env.DEV && <section className="card live-test-notifications" aria-label="Real-time test notifications">
         <header><h2>Real-time test notifications</h2><button className="text-button" disabled={!testNotifications.length} onClick={() => setTestNotifications([])}>Clear test notifications</button></header>
@@ -607,7 +674,7 @@ export function Notifications() {
             className={unread ? "active" : ""}
             onClick={() => setUnread(true)}
           >
-            Unread ({notifications.filter((n) => !n.read).length})
+            Unread ({demoMode ? notifications.filter((n) => !n.read).length : unreadCount})
           </button>
         </div>
         {rows.length ? (
@@ -615,36 +682,38 @@ export function Notifications() {
             <NotificationItem
               key={item.id}
               item={item}
-              onRead={() =>
-                setNotifications(
-                  notifications.map((n) =>
-                    n.id === item.id ? { ...n, read: true } : n,
-                  ),
-                )
-              }
+              onRead={() => markRead(item.id)}
             />
           ))
         ) : (
           <EmptyState title="All caught up.">
-            There are no unread demo notifications.
+            {demoMode ? 'There are no unread demo notifications.' : 'There are no matching notifications.'}
           </EmptyState>
         )}
       </section>
+      {!demoMode && notificationPage < notificationPages && <button className="button secondary" onClick={loadMoreNotifications}>Load more notifications</button>}
     </>
   );
 }
 export function Profile() {
-  const { user, setUser } = useApp();
+  const { user, setUser, refresh, signIn } = useApp();
   const [name, setName] = useState(user.name),
     [email, setEmail] = useState(user.email),
     [message, setMessage] = useState(""),
     [password, setPassword] = useState({ current: "", next: "", confirm: "" }),
     [pwMessage, setPwMessage] = useState(""),
     [busy, setBusy] = useState(false);
-  function save(e) {
+  async function save(e) {
     e.preventDefault();
     if (name.trim().length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setMessage("Enter a full name and valid email.");
+      return;
+    }
+    if (!demoMode) {
+      setBusy(true);
+      try { await walletService.updateProfile(name.trim()); setMessage('Profile saved.'); await refresh(); }
+      catch (error) { setMessage(error.message); }
+      finally { setBusy(false); }
       return;
     }
     setUser({ ...user, name: name.trim(), email });
@@ -666,7 +735,8 @@ export function Profile() {
     }
     setBusy(true);
     try {
-      await authService.changePassword(password);
+      const result = await authService.changePassword(password);
+      await signIn(result); setPwMessage('Password changed. Other sessions have been signed out.');
     } catch (err) {
       setPwMessage(err.message);
     } finally {
@@ -690,7 +760,7 @@ export function Profile() {
           </span>
           <h2>{user.name}</h2>
           <p>{user.email}</p>
-          <span className="demo-chip">Sample personal account</span>
+          <span className="demo-chip">{demoMode ? 'Sample personal account' : user.role + ' virtual account'}</span>
           <dl className="details">
             <div>
               <dt>Wallet identifier</dt>
@@ -702,11 +772,11 @@ export function Profile() {
             </div>
             <div>
               <dt>Workspace</dt>
-              <dd>Demo preview</dd>
+              <dd>{demoMode ? 'Demo preview' : 'Connected virtual account'}</dd>
             </div>
           </dl>
           <div className="notice">
-            Profile changes stay in memory and reset on reload.
+            {demoMode ? 'Profile changes stay in memory and reset on reload.' : 'Profile changes are saved to your account.'}
           </div>
         </section>
         <div className="space-y-6">
@@ -723,12 +793,13 @@ export function Profile() {
               <FormInput
                 label="Email address"
                 id="profile-email"
+                readOnly={!demoMode}
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
-              <button className="button">Save demo changes</button>
+              <button className="button" disabled={busy}>{demoMode ? 'Save demo changes' : 'Save changes'}</button>
               <p role="status">{message}</p>
             </form>
           </section>
@@ -760,9 +831,7 @@ export function Profile() {
               <p role="status">{pwMessage}</p>
             </form>
             <div className="notice">
-              JWT sign-in, password changes and multi-factor authentication
-              require backend implementation. Never use a real banking password
-              in this demo.
+              {demoMode ? 'JWT sign-in, password changes and multi-factor authentication require backend implementation. Never use a real banking password in this demo.' : 'Changing your password requires your current password and signs out your other sessions. Never use a banking password for this educational account.'}
             </div>
           </section>
         </div>
@@ -772,64 +841,79 @@ export function Profile() {
 }
 export function Admin() {
   const [selected, setSelected] = useState(null);
+  const { revision } = useApp();
+  const [userPage, setUserPage] = useState(1), [transactionPage, setTransactionPage] = useState(1), [userSearch, setUserSearch] = useState('');
+  const overview = useRemoteData('/api/admin/dashboard', !demoMode, revision);
+  const users = useRemoteData('/api/admin/users?' + queryString({ page: userPage, limit: 10, search: userSearch }), !demoMode, revision);
+  const monitoring = useRemoteData('/api/admin/transactions?' + queryString({ page: transactionPage, limit: 10 }), !demoMode, revision);
+  const health = useRemoteData('/api/admin/system-health', !demoMode, revision);
   return (
     <>
       <PageHeader
-        eyebrow="ADMINISTRATION · DEMO ONLY"
+        eyebrow={demoMode ? 'ADMINISTRATION · DEMO ONLY' : 'ADMINISTRATION · VIRTUAL PAYMENT SYSTEM'}
         title="The bigger picture."
       >
-        Illustrative PayNet analytics. No production systems are connected.
+        {demoMode ? 'Illustrative PayNet analytics. No production systems are connected.' : 'Recorded system activity. Access is authorized by the server.'}
       </PageHeader>
       <div className="admin-stats">
-        <StatCard title="Total users" value="1,248" icon={Users} />
+        <StatCard title="Total users" value={demoMode ? '1,248' : overview.data?.totalUsers ?? '—'} icon={Users} caption={demoMode ? undefined : 'Registered accounts'} />
         <StatCard
           title="Total transactions"
-          value="8,562"
+          value={demoMode ? '8,562' : overview.data?.totalTransfers ?? '—'}
+          caption={demoMode ? undefined : 'Completed virtual transfers'}
           icon={ArrowLeftRight}
           tone="teal"
         />
-        <StatCard title="Transferred volume" value="LKR 2.4M" icon={Wallet} />
+        <StatCard title="Transferred volume" value={demoMode ? 'LKR 2.4M' : moneyCents(overview.data?.transferredCents)} icon={Wallet} caption={demoMode ? undefined : 'Recorded completed virtual transfers'} />
         <StatCard
-          title="Sample completion"
-          value="98.6%"
+          title={demoMode ? 'Sample completion' : 'Virtual wallets'}
+          value={demoMode ? '98.6%' : overview.data?.totalWallets ?? '—'}
+          caption={demoMode ? undefined : 'One wallet per registered account'}
           icon={Activity}
           tone="teal"
         />
       </div>
+      {!demoMode && [overview, users, monitoring, health].some((r) => r.loading) && <p role="status">Loading administration data...</p>}
+      {!demoMode && [overview, users, monitoring, health].filter((r) => r.error).map((r, i) => <p key={i} className="error" role="alert">{r.error} <button className="text-button" onClick={r.retry}>Retry</button></p>)}
       <div className="dashboard-middle">
         <section className="card">
           <h2>Transaction analytics</h2>
-          <p>Sample monthly volume · LKR</p>
-          <ActivityChart bars />
+          <p>{demoMode ? 'Sample monthly volume · LKR' : 'Recorded monthly transferred virtual volume · LKR'}</p>
+          <ActivityChart bars data={overview.data?.activity || []} />
         </section>
         <section className="card system-panel">
           <h2>System health</h2>
           <HealthPanel />
-          {[
+          {(demoMode ? [
             ["Authentication", "Not implemented"],
             ["Database health", "Not exposed by API"],
             ["Payment processing", "Not connected"],
             ["Socket.IO events", "Planned"],
-          ].map(([a, b]) => (
+          ] : [
+            ['Authentication', 'Server-authorized admin session'], ['Database health', health.data?.database?.ready ? 'Connected' : 'Unavailable'],
+            ['Payment processing', health.data?.database?.transactionsSupported ? 'Transactions supported' : 'Replica set required'],
+            ['Socket.IO events', String(health.data?.sockets ?? 0) + ' authenticated clients'],
+          ]).map(([a, b]) => (
             <div className="system-row" key={a}>
               <span>{a}</span>
               <span>{b}</span>
             </div>
           ))}
           <div className="notice">
-            Server-side admin role authorization is required before production
-            use.
+            {demoMode ? 'Server-side admin role authorization is required before production use.' : 'Educational system using virtual funds only. No banking integration.'}
           </div>
         </section>
       </div>
       <section className="card">
         <h2>Transaction monitoring</h2>
-        <p>Sample data · No live transfers</p>
-        <TransactionTable rows={transactions.slice(0, 5)} />
+        <p>{demoMode ? 'Sample data · No live transfers' : 'Persisted virtual transfer audit records'}</p>
+        <TransactionTable rows={demoMode ? transactions.slice(0, 5) : (monitoring.data?.items || []).map(mapTransaction)} />
+        {!demoMode && <div className="pagination"><button className="button secondary small" disabled={transactionPage <= 1} onClick={() => setTransactionPage((p) => p - 1)}>Previous transfers</button><span>Page {transactionPage} of {monitoring.data?.pages || 1}</span><button className="button secondary small" disabled={transactionPage >= (monitoring.data?.pages || 1)} onClick={() => setTransactionPage((p) => p + 1)}>Next transfers</button></div>}
       </section>
       <section className="card mt-6">
         <h2>User management</h2>
-        <p>Fictional accounts for interface preview</p>
+        <p>{demoMode ? 'Fictional accounts for interface preview' : 'Registered account directory'}</p>
+        {!demoMode && <input aria-label="Search users" placeholder="Search users" value={userSearch} onChange={(e) => { setUserSearch(e.target.value); setUserPage(1); }} />}
         <div className="transaction-table">
           <table>
             <thead>
@@ -841,23 +925,23 @@ export function Admin() {
               </tr>
             </thead>
             <tbody>
-              {[
+              {(demoMode ? [
                 "Alex Morgan",
                 "Sarah Wilson",
                 "Daniel Perera",
                 "Maya Fernando",
-              ].map((name, i) => (
-                <tr key={name}>
+              ].map((name, i) => ({ fullName: name, email: name.toLowerCase().replace(' ', '.') + '@example.com', role: 'Sample user', id: `PN-DEMO-00${i + 1}` })) : users.data?.items || []).map((account) => (
+                <tr key={account.id}>
                   <td>
-                    <strong>{name}</strong>
+                    <strong>{account.fullName}</strong>
                   </td>
-                  <td>{name.toLowerCase().replace(" ", ".")}@example.com</td>
-                  <td>Sample user</td>
+                  <td>{account.email}</td>
+                  <td>{account.role}</td>
                   <td>
                     <button
                       className="text-button"
                       onClick={() =>
-                        setSelected({ name, id: `PN-DEMO-00${i + 1}` })
+                        setSelected({ name: account.fullName, id: account.id })
                       }
                     >
                       View user <ArrowUpRight size={15} />
@@ -868,17 +952,17 @@ export function Admin() {
             </tbody>
           </table>
         </div>
+        {!demoMode && <div className="pagination"><button className="button secondary small" disabled={userPage <= 1} onClick={() => setUserPage((p) => p - 1)}>Previous users</button><span>Page {userPage} of {users.data?.pages || 1}</span><button className="button secondary small" disabled={userPage >= (users.data?.pages || 1)} onClick={() => setUserPage((p) => p + 1)}>Next users</button></div>}
       </section>
       {selected && (
         <ConfirmModal
-          title="Sample user details"
+          title={demoMode ? 'Sample user details' : 'User details'}
           onClose={() => setSelected(null)}
         >
           <h3>{selected.name}</h3>
           <p>{selected.id}</p>
           <div className="notice">
-            User administration requires authorized backend endpoints. No
-            account changes can be made here.
+            {demoMode ? 'User administration requires authorized backend endpoints. No account changes can be made here.' : 'Account directory data is provided by the authorized admin API.'}
           </div>
         </ConfirmModal>
       )}
