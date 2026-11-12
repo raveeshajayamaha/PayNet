@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PayNet - Real-Time Network Payments</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b3d33'/%3E%3Cpath d='M9 23V9h8a5 5 0 010 10h-4' fill='none' stroke='%23f2b84b' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="#home" data-nav="home"><span class="logo">P</span>PayNet</a>
+  <nav id="nav">
+    <a href="#home" data-nav="home">Home</a>
+    <a href="#about" data-nav="about">How it works</a>
+    <a href="#login" data-nav="auth" id="nav-login">Log in</a>
+    <a href="#dashboard" data-nav="dashboard" id="nav-dash" hidden>Dashboard</a>
+    <button id="btn-logout" class="btn btn-ghost" hidden>Log out</button>
+  </nav>
+</header>
+
+<main>
+
+<!-- 1. LANDING -->
+<section id="view-home" class="view">
+  <div class="hero">
+    <div class="hero-text">
+      <p class="eyebrow">Java sockets &middot; HTTP &middot; Server-Sent Events</p>
+      <h1>Money that moves<br>the moment you <em>press send.</em></h1>
+      <p class="lead">PayNet is a payment processing system written in plain Java. One server, two doors (a TCP client and this website), and every transfer is pushed to both people instantly.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#register" data-nav="auth">Create an account</a>
+        <a class="btn btn-ghost" href="#about" data-nav="about">See how it works</a>
+      </div>
+    </div>
+    <div class="hero-card" aria-hidden="true">
+      <div class="mini-label">Live from the server</div>
+      <div class="stat"><span id="stat-online">0</span><label>people connected live</label></div>
+      <div class="stat"><span id="stat-tx">0</span><label>transactions since start</label></div>
+      <div class="stat"><span id="stat-vol">0.00</span><label>total volume moved</label></div>
+      <div class="pulse"><i></i> updating every few seconds</div>
+    </div>
+  </div>
+
+  <div class="blocks">
+    <article>
+      <h3>One brain</h3>
+      <p>A single <code>PaymentService</code> holds all accounts. The TCP server and this web server both call it, so a transfer made from the command line shows up here too.</p>
+    </article>
+    <article>
+      <h3>Safe money</h3>
+      <p>Amounts are whole cents (never floating point) and a transfer is atomic: the sender is debited and the receiver credited together, or not at all.</p>
+    </article>
+    <article>
+      <h3>Truly real-time</h3>
+      <p>No refresh button. Your browser keeps one connection open and the server pushes each transaction down it the instant it happens.</p>
+    </article>
+  </div>
+</section>
+
+<!-- 2. AUTH -->
+<section id="view-auth" class="view" hidden>
+  <div class="auth-wrap">
+    <div class="tabs" role="tablist">
+      <button class="tab" id="tab-login" role="tab" data-tab="login">Log in</button>
+      <button class="tab" id="tab-register" role="tab" data-tab="register">Register</button>
+    </div>
+
+    <form id="form-login" class="card form" autocomplete="on">
+      <h2>Welcome back</h2>
+      <label>Username<input name="username" required autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+      <p class="form-error" role="alert"></p>
+      <button class="btn btn-primary" type="submit">Log in</button>
+    </form>
+
+    <form id="form-register" class="card form" autocomplete="on" hidden>
+      <h2>Open an account</h2>
+      <p class="hint">New accounts start with a demo balance of 1,000.00.</p>
+      <label>Full name<input name="fullName" required autocomplete="name"></label>
+      <label>Username<input name="username" required minlength="3" maxlength="20" pattern="[A-Za-z0-9_]+" autocomplete="username"><small>3-20 letters, digits or _</small></label>
+      <label>Password<input name="password" type="password" required minlength="4" autocomplete="new-password"><small>At least 4 characters</small></label>
+      <p class="form-error" role="alert"></p>
+      <button class="btn btn-primary" type="submit">Create account</button>
+    </form>
+  </div>
+</section>
+
+<!-- 3. DASHBOARD -->
+<section id="view-dashboard" class="view" hidden>
+  <div class="dash-head">
+    <div>
+      <p class="eyebrow">Signed in as <strong id="who"></strong></p>
+      <div class="balance"><span class="cur">$</span><span id="balance">0.00</span></div>
+      <div class="live" id="live-badge"><i></i><span>connecting...</span></div>
+    </div>
+    <div class="dash-forms">
+      <form id="form-send" class="card form compact">
+        <h3>Send money</h3>
+        <label>To (username)<input name="to" required autocomplete="off"></label>
+        <div class="row">
+          <label>Amount<input name="amount" inputmode="decimal" placeholder="12.50" required autocomplete="off"></label>
+          <label>Note<input name="note" maxlength="60" placeholder="optional" autocomplete="off"></label>
+        </div>
+        <p class="form-error" role="alert"></p>
+        <button class="btn btn-primary" type="submit">Send</button>
+      </form>
+      <form id="form-deposit" class="card form compact">
+        <h3>Add funds</h3>
+        <label>Amount<input name="amount" inputmode="decimal" placeholder="50.00" required autocomplete="off"></label>
+        <p class="form-error" role="alert"></p>
+        <button class="btn btn-accent" type="submit">Deposit</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card history">
+    <h3>Transaction history</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Time</th><th>Counterparty</th><th>Note</th><th class="num">Amount</th></tr></thead>
+        <tbody id="tx-body"></tbody>
+      </table>
+    </div>
+    <p id="tx-empty" class="hint" hidden>No transactions yet. Send or deposit something!</p>
+  </div>
+</section>
+
+<!-- 4. ABOUT -->
+<section id="view-about" class="view" hidden>
+  <div class="about">
+    <h2>How PayNet works</h2>
+    <p class="lead">Three small ideas from network programming, working together.</p>
+
+    <div class="steps">
+      <article>
+        <span class="n">1</span>
+        <h3>TCP: a conversation of lines</h3>
+        <p>The core server listens on port 5000. A client opens a socket and sends one text line per command, with fields split by <code>|</code>. The server answers with one line starting with <code>OK</code> or <code>ERR</code>.</p>
+        <pre>&gt; LOGIN|alice|secret
+&lt; OK|LOGIN|alice|100000
+&gt; TRANSFER|bob|550|lunch
+&lt; OK|TRANSFER|17|99450
+&lt; EVENT|TX|17|alice|bob|550|...</pre>
+        <p>Each connection gets its own thread, so many users can be served at the same time. The server can also push an <code>EVENT</code> line at any moment, which is why a client needs a separate reader thread.</p>
+      </article>
+      <article>
+        <span class="n">2</span>
+        <h3>HTTP: the website's language</h3>
+        <p>Browsers cannot open raw TCP sockets, so a second server on port 8080 speaks HTTP and JSON. It serves this page and a small REST API (<code>/api/login</code>, <code>/api/transfer</code>, <code>/api/history</code> ...). After logging in you receive a token that is sent in the <code>Authorization: Bearer</code> header.</p>
+        <p>Both servers call the very same <code>PaymentService</code>, so there is one set of accounts and one set of rules.</p>
+      </article>
+      <article>
+        <span class="n">3</span>
+        <h3>SSE: the server talks first</h3>
+        <p>Normal HTTP is request and response. With Server-Sent Events the browser opens <code>/api/stream</code> once and the server keeps the response open, writing a new <code>event: tx</code> message every time you are the sender or receiver of a payment. A <code>ping</code> every 15 seconds keeps the line alive. That is how the history table and your balance update without a refresh.</p>
+      </article>
+    </div>
+
+    <div class="card">
+      <h3>Why cents?</h3>
+      <p>Computers cannot store 0.1 exactly as a decimal number, so adding money in floating point drifts. PayNet stores every amount as a whole number of cents (<code>12.50</code> is <code>1250</code>) and only converts for display. This page does the same conversion before it sends a request.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">PayNet &middot; student project &middot; Java, no external libraries &middot; demo money only</footer>
+
+<div id="toasts" aria-live="polite"></div>
+<script src="js/app.js"></script>
+</body>
+</html>
